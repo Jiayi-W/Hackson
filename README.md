@@ -29,6 +29,8 @@ python scripts/run_ablations.py
 python scripts/run_quantum_rollout.py
 python scripts/run_quantum_benchmarks.py
 python scripts/make_figures.py
+python scripts/run_question_study.py
+python scripts/make_question_figures.py
 ```
 
 Generated figures will be written to:
@@ -38,6 +40,10 @@ Generated figures will be written to:
 Structured experiment exports will be written to:
 
 `artifacts/raw_results/`
+
+Research-question figures and GIFs will be written to:
+
+`artifacts/question_figures/`
 
 ## Figure Set
 
@@ -69,6 +75,11 @@ team can fill them in incrementally during the hackathon.
 - `scripts/run_quantum_benchmarks.py` builds real-QAOA benchmark exports for
   F4/F5 under a smoke budget by default, with `--full-budget` available when
   you want a heavier run.
+- `scripts/run_question_study.py` exports the regime-study tables used to
+  answer the warm-start research questions across stationary, gradual, and
+  sudden dynamics.
+- `scripts/make_question_figures.py` renders a question-driven figure set with
+  six static figures and two GIF animations under `artifacts/question_figures/`.
 - `scripts/make_figures.py` renders the eight final figures and can switch
   F2/F3/F6 to real QAOA rollout exports with
   `--rollout-source quantum --quantum-prefix <prefix>`, and can switch F4/F5

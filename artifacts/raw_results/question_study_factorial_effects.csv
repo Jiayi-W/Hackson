@@ -1,0 +1,31 @@
+regime,seed,method,pretty_method,state_reuse,parameter_reuse,improvement_vs_cold
+stationary,101,Param,Parameter Transfer,0,1,0.6860083776992674
+stationary,101,State,State Warm Start,1,0,0.6860083776992674
+stationary,101,Combined,Combined,1,1,1.6199999999999997
+stationary,102,Param,Parameter Transfer,0,1,0.6860083776992674
+stationary,102,State,State Warm Start,1,0,0.6860083776992674
+stationary,102,Combined,Combined,1,1,1.6199999999999997
+gradual,201,Param,Parameter Transfer,0,1,0.27042433717633707
+gradual,201,State,State Warm Start,1,0,0.27042433717633707
+gradual,201,Combined,Combined,1,1,1.6773551573178027
+gradual,202,Param,Parameter Transfer,0,1,0.2672214057604938
+gradual,202,State,State Warm Start,1,0,0.2672214057604938
+gradual,202,Combined,Combined,1,1,0.9600000000000002
+gradual,203,Param,Parameter Transfer,0,1,0.23583662904413627
+gradual,203,State,State Warm Start,1,0,0.40343242069545926
+gradual,203,Combined,Combined,1,1,1.1396852201245955
+gradual,204,Param,Parameter Transfer,0,1,0.541247511506993
+gradual,204,State,State Warm Start,1,0,0.541247511506993
+gradual,204,Combined,Combined,1,1,1.50463525583721
+sudden,301,Param,Parameter Transfer,0,1,0.5008669417400502
+sudden,301,State,State Warm Start,1,0,0.6082379119932835
+sudden,301,Combined,Combined,1,1,1.273126952714497
+sudden,302,Param,Parameter Transfer,0,1,0.3933682252133692
+sudden,302,State,State Warm Start,1,0,0.5194264311276497
+sudden,302,Combined,Combined,1,1,1.2497706110853999
+sudden,303,Param,Parameter Transfer,0,1,0.40624225023655924
+sudden,303,State,State Warm Start,1,0,0.44899465130986727
+sudden,303,Combined,Combined,1,1,1.3950937175184668
+sudden,304,Param,Parameter Transfer,0,1,0.37595064915459453
+sudden,304,State,State Warm Start,1,0,0.38909374979398326
+sudden,304,Combined,Combined,1,1,1.05125266618465

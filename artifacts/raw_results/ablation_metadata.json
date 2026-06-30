@@ -1,0 +1,17 @@
+{
+  "tradeoff_lambdas": [
+    "0.00",
+    "0.15",
+    "0.30",
+    "0.60"
+  ],
+  "transfer_regimes": [
+    "stationary",
+    "gradual",
+    "sudden"
+  ],
+  "trace_methods": [
+    "Cold",
+    "Combined"
+  ]
+}

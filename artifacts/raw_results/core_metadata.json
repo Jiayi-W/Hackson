@@ -1,0 +1,17 @@
+{
+  "regime": "sudden",
+  "seed": 11,
+  "lambda_switch": 0.3,
+  "n_users": 5,
+  "n_channels": 3,
+  "time_steps": 10,
+  "methods": [
+    "Cold",
+    "Param",
+    "State",
+    "Combined",
+    "Greedy",
+    "Local Search",
+    "Offline DP"
+  ]
+}

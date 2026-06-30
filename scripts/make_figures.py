@@ -12,9 +12,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from respec.environment import generate_sequence, weighted_bray_curtis_change
-from respec.metrics import build_transfer_gain_records, build_tradeoff_table
+from respec.metrics import (
+    build_adaptation_trace_profiles,
+    build_cx_budget_curves,
+    build_noise_sweep_curves,
+    build_tradeoff_table,
+    build_transfer_gain_records,
+)
 from respec.objective import classical_objective
-from respec.optimizer import best_so_far_trace
 from respec.runner import build_demo_rollouts
 from respec.visualization import (
     CHANNEL_COLORS,
@@ -165,16 +170,12 @@ def make_f5(output_dir: Path) -> None:
 
 def make_f6(methods, output_dir: Path) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(12.0, 4.6), sharey=True)
-    evaluations = np.arange(1, 25)
-
-    gradual_cold = best_so_far_trace(0.97, methods["Cold"].step_costs[4], 24, shape="slow")
-    gradual_combined = best_so_far_trace(0.88, methods["Combined"].step_costs[4], 24, shape="fast")
-    sudden_cold = best_so_far_trace(1.08, methods["Cold"].step_costs[5], 24, shape="fast")
-    sudden_combined = best_so_far_trace(1.18, methods["Combined"].step_costs[5], 24, shape="reset")
+    traces = build_adaptation_trace_profiles(lambda_switch=0.30)
+    evaluations = traces["evaluation"]
 
     panels = [
-        ("Gradual change", gradual_cold, gradual_combined),
-        ("Sudden change", sudden_cold, sudden_combined),
+        ("Gradual change", traces["gradual_cold"], traces["gradual_combined"]),
+        ("Sudden change", traces["sudden_cold"], traces["sudden_combined"]),
     ]
 
     for ax, (title, cold_trace, combined_trace) in zip(axes, panels, strict=True):
@@ -198,11 +199,12 @@ def make_f6(methods, output_dir: Path) -> None:
 
 
 def make_f7(output_dir: Path) -> None:
-    cx = np.array([54, 72, 90, 108, 126])
-    ring_feasible = np.array([1.00, 1.00, 0.997, 0.994, 0.990])
-    penalty_feasible = np.array([0.64, 0.71, 0.78, 0.83, 0.87])
-    ring_cost = np.array([0.49, 0.44, 0.40, 0.38, 0.36])
-    penalty_cost = np.array([0.68, 0.61, 0.54, 0.49, 0.45])
+    curves = build_cx_budget_curves()
+    cx = curves["cx_budget"]
+    ring_feasible = curves["ring_feasible"]
+    penalty_feasible = curves["penalty_feasible"]
+    ring_cost = curves["ring_cost"]
+    penalty_cost = curves["penalty_cost"]
 
     fig, axes = plt.subplots(1, 2, figsize=(12.0, 4.7))
 
@@ -227,11 +229,12 @@ def make_f7(output_dir: Path) -> None:
 
 
 def make_f8(output_dir: Path) -> None:
-    noise = np.array([0.000, 0.002, 0.005, 0.010, 0.020])
-    feasible_combined = np.array([1.00, 0.985, 0.960, 0.920, 0.860])
-    feasible_cold = np.array([1.00, 0.978, 0.944, 0.891, 0.812])
-    gap_combined = np.array([0.00, 0.016, 0.034, 0.072, 0.131])
-    gap_cold = np.array([0.00, 0.021, 0.046, 0.090, 0.156])
+    curves = build_noise_sweep_curves()
+    noise = curves["noise"]
+    feasible_combined = curves["feasible_combined"]
+    feasible_cold = curves["feasible_cold"]
+    gap_combined = curves["gap_combined"]
+    gap_cold = curves["gap_cold"]
 
     fig, axes = plt.subplots(1, 2, figsize=(12.0, 4.7))
 

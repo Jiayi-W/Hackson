@@ -8,6 +8,8 @@ This repository currently focuses on two deliverables from the project plan:
 1. A clean project scaffold that mirrors the proposed repository layout.
 2. A reproducible `make_figures.py` pipeline that generates the eight
    presentation figures listed in Section 7.1 of the PDF plan.
+3. Exportable CSV and JSON datasets for rollouts, allocations, transfer-gain
+   points, tradeoff sweeps, and other figure-driving artifacts.
 
 ## Important Scope Note
 
@@ -22,12 +24,18 @@ They are useful for project framing, slides, and demo design, but they are
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
+python scripts/run_core.py
+python scripts/run_ablations.py
 python scripts/make_figures.py
 ```
 
 Generated figures will be written to:
 
 `artifacts/figures/`
+
+Structured experiment exports will be written to:
+
+`artifacts/raw_results/`
 
 ## Figure Set
 
@@ -50,3 +58,9 @@ The directory structure follows the PDF plan closely, with working utilities in
 that are not implemented yet are scaffolded with explicit placeholders so the
 team can fill them in incrementally during the hackathon.
 
+## Current Working Outputs
+
+- `scripts/run_core.py` exports the main sudden-sequence rollout datasets.
+- `scripts/run_ablations.py` exports the figure-driving sweep datasets.
+- `scripts/make_figures.py` renders the eight final figures from the same
+  deterministic data definitions used by the exports.

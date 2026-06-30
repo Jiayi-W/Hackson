@@ -31,6 +31,7 @@ python scripts/run_quantum_benchmarks.py
 python scripts/make_figures.py
 python scripts/run_question_study.py
 python scripts/make_question_figures.py
+python scripts/make_question_dashboards.py
 ```
 
 Generated figures will be written to:
@@ -44,6 +45,10 @@ Structured experiment exports will be written to:
 Research-question figures and GIFs will be written to:
 
 `artifacts/question_figures/`
+
+Linked regime dashboard GIFs will be written to:
+
+`artifacts/question_dashboards/`
 
 ## Figure Set
 
@@ -80,6 +85,9 @@ team can fill them in incrementally during the hackathon.
   sudden dynamics.
 - `scripts/make_question_figures.py` renders a question-driven figure set with
   six static figures and two GIF animations under `artifacts/question_figures/`.
+- `scripts/make_question_dashboards.py` renders three linked dashboard GIFs
+  for `stationary`, `gradual`, and `sudden`, with user-position motion on the
+  left and synchronized data panels on the right.
 - `scripts/make_figures.py` renders the eight final figures and can switch
   F2/F3/F6 to real QAOA rollout exports with
   `--rollout-source quantum --quantum-prefix <prefix>`, and can switch F4/F5

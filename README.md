@@ -65,5 +65,6 @@ team can fill them in incrementally during the hackathon.
 - `scripts/run_ablations.py` exports the figure-driving sweep datasets.
 - `scripts/run_quantum_rollout.py` runs a real Qiskit-backed smoke rollout by
   default, with `--full-budget` available for a heavier plan-style run.
-- `scripts/make_figures.py` renders the eight final figures from the same
-  deterministic data definitions used by the exports.
+- `scripts/make_figures.py` renders the eight final figures and can switch
+  F2/F3/F6 to real QAOA rollout exports with
+  `--rollout-source quantum --quantum-prefix <prefix>`.

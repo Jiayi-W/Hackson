@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import argparse
+import csv
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -33,6 +36,95 @@ from respec.visualization import (
 
 def _channel_cmap():
     return apply_style()
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Render the ReSpec-QAOA figure set.")
+    parser.add_argument(
+        "--rollout-source",
+        choices=["surrogate", "quantum"],
+        default="surrogate",
+        help="Which data source to use for F2/F3/F6.",
+    )
+    parser.add_argument(
+        "--quantum-prefix",
+        default="quantum_suite_smoke",
+        help="Prefix under artifacts/raw_results for quantum rollout exports.",
+    )
+    return parser.parse_args()
+
+
+def load_quantum_rollout_dataset(prefix: str) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
+    raw_dir = ROOT / "artifacts" / "raw_results"
+    metadata_path = raw_dir / f"{prefix}_metadata.json"
+    step_path = raw_dir / f"{prefix}_step_results.csv"
+    trace_path = raw_dir / f"{prefix}_optimization_traces.csv"
+
+    import json
+
+    if not metadata_path.exists() or not step_path.exists() or not trace_path.exists():
+        raise FileNotFoundError(
+            f"Quantum rollout files for prefix '{prefix}' are missing under {raw_dir}."
+        )
+
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    lambda_switch = float(metadata["lambda_switch"])
+
+    methods: dict[str, dict[str, list]] = {}
+    with step_path.open("r", newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            method = row["method"]
+            methods.setdefault(
+                method,
+                {
+                    "snapshot_t": [],
+                    "allocations": [],
+                    "step_costs": [],
+                    "cumulative_interference": [],
+                    "cumulative_switches": [],
+                },
+            )
+            methods[method]["snapshot_t"].append(int(row["snapshot_t"]))
+            methods[method]["allocations"].append(
+                np.array([int(value) for value in row["allocation"].split("-")], dtype=int)
+            )
+            methods[method]["step_costs"].append(float(row["best_sample_cost"]))
+            methods[method]["cumulative_interference"].append(float(row["best_sample_cost"]))
+            methods[method]["cumulative_switches"].append(float(row["snapshot_t"] != "0"))
+
+    loaded_methods: dict[str, object] = {}
+    for method, payload in methods.items():
+        ordering = np.argsort(payload["snapshot_t"])
+        allocations = [payload["allocations"][idx] for idx in ordering]
+        step_costs = np.array([payload["step_costs"][idx] for idx in ordering], dtype=float)
+        step_switches = [0.0]
+        step_interference = [float(step_costs[0])]
+        for allocation_index in range(1, len(allocations)):
+            switches = float(np.mean(allocations[allocation_index] != allocations[allocation_index - 1]))
+            step_switches.append(switches)
+            step_interference.append(float(step_costs[allocation_index] - lambda_switch * switches))
+        loaded_methods[method] = SimpleNamespace(
+            method=method,
+            allocations=allocations,
+            step_costs=step_costs,
+            cumulative_costs=np.cumsum(step_costs),
+            cumulative_interference=np.cumsum(np.array(step_interference, dtype=float)),
+            cumulative_switches=np.cumsum(np.array(step_switches, dtype=float)),
+        )
+
+    traces: dict[str, dict[int, dict[str, list[float]]]] = {}
+    with trace_path.open("r", newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            method = row["method"]
+            snapshot_t = int(row["snapshot_t"])
+            traces.setdefault(method, {})
+            traces[method].setdefault(snapshot_t, {"evaluation": [], "best_so_far": []})
+            traces[method][snapshot_t]["evaluation"].append(int(row["evaluation"]))
+            traces[method][snapshot_t]["best_so_far"].append(float(row["best_so_far"]))
+
+    return metadata, loaded_methods, traces
 
 
 def make_f1(sequence, combined_allocations, output_dir: Path) -> None:
@@ -83,9 +175,10 @@ def make_f1(sequence, combined_allocations, output_dir: Path) -> None:
     save_figure(fig, output_dir / "F1_network_evolution.png")
 
 
-def make_f2(methods, output_dir: Path) -> None:
+def make_f2(methods, output_dir: Path, quantum_metadata: dict[str, object] | None = None) -> None:
     cmap = _channel_cmap()
     fig, axes = plt.subplots(1, 2, figsize=(12.5, 4.6), sharey=True)
+    is_sudden = True if quantum_metadata is None else str(quantum_metadata["regime"]) == "sudden"
 
     for ax, method in zip(axes, ("Cold", "Combined"), strict=True):
         data = np.vstack(methods[method].allocations).T
@@ -95,8 +188,9 @@ def make_f2(methods, output_dir: Path) -> None:
         ax.set_xticks(range(data.shape[1]))
         ax.set_yticks(range(data.shape[0]))
         ax.set_yticklabels([f"User {idx}" for idx in range(data.shape[0])])
-        ax.axvline(4.5, color="#C1121F", linestyle="--", linewidth=1.2, alpha=0.8)
-        ax.text(4.65, -0.85, "jump", color="#C1121F", fontsize=9, weight="bold")
+        if is_sudden and data.shape[1] >= 6:
+            ax.axvline(4.5, color="#C1121F", linestyle="--", linewidth=1.2, alpha=0.8)
+            ax.text(4.65, -0.85, "jump", color="#C1121F", fontsize=9, weight="bold")
 
     cbar = fig.colorbar(im, ax=axes, fraction=0.04, pad=0.02, ticks=[0, 1, 2])
     cbar.ax.set_yticklabels(["Ch 0", "Ch 1", "Ch 2"])
@@ -106,7 +200,12 @@ def make_f2(methods, output_dir: Path) -> None:
 
 def make_f3(methods, output_dir: Path) -> None:
     fig, ax = plt.subplots(figsize=(9.4, 5.0))
-    for method in ("Cold", "Param", "State", "Combined", "Greedy", "Local Search", "Offline DP"):
+    available_methods = tuple(
+        method
+        for method in ("Cold", "Param", "State", "Combined", "Greedy", "Local Search", "Offline DP")
+        if method in methods
+    )
+    for method in available_methods:
         ax.plot(
             range(len(methods[method].cumulative_costs)),
             methods[method].cumulative_costs,
@@ -118,7 +217,7 @@ def make_f3(methods, output_dir: Path) -> None:
     ax.set_ylabel("Cumulative cost")
     ax.set_title("F3. Cumulative Total Cost")
     polish_axes(ax)
-    ax.legend(ncol=4, fontsize=8)
+    ax.legend(ncol=4 if len(available_methods) > 4 else 2, fontsize=8)
     save_figure(fig, output_dir / "F3_cumulative_total_cost.png")
 
 
@@ -168,17 +267,34 @@ def make_f5(output_dir: Path) -> None:
     save_figure(fig, output_dir / "F5_transfer_gain_vs_graph_change.png")
 
 
-def make_f6(methods, output_dir: Path) -> None:
+def make_f6(methods, output_dir: Path, quantum_metadata: dict[str, object] | None = None, quantum_traces: dict[str, object] | None = None) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(12.0, 4.6), sharey=True)
-    traces = build_adaptation_trace_profiles(lambda_switch=0.30)
-    evaluations = traces["evaluation"]
+    if quantum_metadata is None or quantum_traces is None:
+        traces = build_adaptation_trace_profiles(lambda_switch=0.30)
+        evaluations = traces["evaluation"]
+        panels = [
+            ("Gradual change", evaluations, traces["gradual_cold"], traces["gradual_combined"]),
+            ("Sudden change", evaluations, traces["sudden_cold"], traces["sudden_combined"]),
+        ]
+    else:
+        regime = str(quantum_metadata["regime"]).capitalize()
+        time_steps = int(quantum_metadata["time_steps"])
+        selected_snapshots = [1, max(1, time_steps - 1)]
+        panels = []
+        for snapshot_t in selected_snapshots:
+            cold = quantum_traces["Cold"][snapshot_t]
+            combined = quantum_traces["Combined"][snapshot_t]
+            evaluations = np.array(cold["evaluation"], dtype=int)
+            panels.append(
+                (
+                    f"{regime} change (t={snapshot_t})",
+                    evaluations,
+                    np.array(cold["best_so_far"], dtype=float),
+                    np.array(combined["best_so_far"], dtype=float),
+                )
+            )
 
-    panels = [
-        ("Gradual change", traces["gradual_cold"], traces["gradual_combined"]),
-        ("Sudden change", traces["sudden_cold"], traces["sudden_combined"]),
-    ]
-
-    for ax, (title, cold_trace, combined_trace) in zip(axes, panels, strict=True):
+    for ax, (title, evaluations, cold_trace, combined_trace) in zip(axes, panels, strict=True):
         ax.step(evaluations, cold_trace, where="post", color=METHOD_COLORS["Cold"], linewidth=2.1, label="Cold")
         ax.step(
             evaluations,
@@ -259,19 +375,28 @@ def make_f8(output_dir: Path) -> None:
 
 
 def main() -> None:
+    args = parse_args()
     output_dir = ROOT / "artifacts" / "figures"
     output_dir.mkdir(parents=True, exist_ok=True)
     _channel_cmap()
 
-    sequence, methods = build_demo_rollouts()
-    combined_allocations = methods["Combined"].allocations
+    sequence, base_methods = build_demo_rollouts()
+    methods = dict(base_methods)
+    quantum_metadata = None
+    quantum_traces = None
+
+    if args.rollout_source == "quantum":
+        quantum_metadata, quantum_methods, quantum_traces = load_quantum_rollout_dataset(args.quantum_prefix)
+        methods = {**methods, **quantum_methods}
+
+    combined_allocations = base_methods["Combined"].allocations
 
     make_f1(sequence, combined_allocations, output_dir)
-    make_f2(methods, output_dir)
+    make_f2(methods, output_dir, quantum_metadata=quantum_metadata)
     make_f3(methods, output_dir)
     make_f4(output_dir)
     make_f5(output_dir)
-    make_f6(methods, output_dir)
+    make_f6(methods, output_dir, quantum_metadata=quantum_metadata, quantum_traces=quantum_traces)
     make_f7(output_dir)
     make_f8(output_dir)
 

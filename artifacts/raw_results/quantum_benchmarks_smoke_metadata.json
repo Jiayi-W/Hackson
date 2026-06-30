@@ -1,0 +1,30 @@
+{
+  "time_steps": 5,
+  "evaluations": 6,
+  "optimization_shots": 64,
+  "final_shots": 256,
+  "lambda_values": [
+    0.0,
+    0.15,
+    0.3,
+    0.6
+  ],
+  "methods": [
+    "Cold",
+    "Combined"
+  ],
+  "tradeoff_regime": "sudden",
+  "tradeoff_seed": 11,
+  "transfer_regime_seeds": {
+    "stationary": [
+      3
+    ],
+    "gradual": [
+      11
+    ],
+    "sudden": [
+      19
+    ]
+  },
+  "output_prefix": "quantum_benchmarks_smoke"
+}

@@ -51,6 +51,11 @@ def parse_args() -> argparse.Namespace:
         default="quantum_suite_smoke",
         help="Prefix under artifacts/raw_results for quantum rollout exports.",
     )
+    parser.add_argument(
+        "--quantum-benchmark-prefix",
+        default="quantum_benchmarks_smoke",
+        help="Prefix under artifacts/raw_results for quantum benchmark exports.",
+    )
     return parser.parse_args()
 
 
@@ -125,6 +130,40 @@ def load_quantum_rollout_dataset(prefix: str) -> tuple[dict[str, object], dict[s
             traces[method][snapshot_t]["best_so_far"].append(float(row["best_so_far"]))
 
     return metadata, loaded_methods, traces
+
+
+def load_quantum_benchmark_dataset(prefix: str) -> tuple[dict[str, object], list[dict[str, object]], list[dict[str, object]]]:
+    raw_dir = ROOT / "artifacts" / "raw_results"
+    metadata_path = raw_dir / f"{prefix}_metadata.json"
+    tradeoff_path = raw_dir / f"{prefix}_tradeoff_points.csv"
+    transfer_path = raw_dir / f"{prefix}_transfer_points.csv"
+
+    import json
+
+    if not metadata_path.exists() or not tradeoff_path.exists() or not transfer_path.exists():
+        raise FileNotFoundError(
+            f"Quantum benchmark files for prefix '{prefix}' are missing under {raw_dir}."
+        )
+
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+
+    def _read_csv(path: Path) -> list[dict[str, object]]:
+        rows: list[dict[str, object]] = []
+        with path.open("r", newline="", encoding="utf-8") as handle:
+            reader = csv.DictReader(handle)
+            for row in reader:
+                parsed: dict[str, object] = {}
+                for key, value in row.items():
+                    if key in {"regime", "method"}:
+                        parsed[key] = value
+                    elif key in {"seed", "snapshot_t"}:
+                        parsed[key] = int(value)
+                    else:
+                        parsed[key] = float(value)
+                rows.append(parsed)
+        return rows
+
+    return metadata, _read_csv(tradeoff_path), _read_csv(transfer_path)
 
 
 def make_f1(sequence, combined_allocations, output_dir: Path) -> None:
@@ -221,17 +260,33 @@ def make_f3(methods, output_dir: Path) -> None:
     save_figure(fig, output_dir / "F3_cumulative_total_cost.png")
 
 
-def make_f4(output_dir: Path) -> None:
+def make_f4(output_dir: Path, quantum_tradeoff_rows: list[dict[str, object]] | None = None) -> None:
     fig, ax = plt.subplots(figsize=(8.7, 5.0))
-    tradeoff = build_tradeoff_table([0.00, 0.15, 0.30, 0.60])
-    ordered = ["0.00", "0.15", "0.30", "0.60"]
+    if quantum_tradeoff_rows is None:
+        tradeoff = build_tradeoff_table([0.00, 0.15, 0.30, 0.60])
+        ordered = ["0.00", "0.15", "0.30", "0.60"]
 
-    for method in ("Combined", "Greedy"):
-        xs = [tradeoff[method][key][0] for key in ordered]
-        ys = [tradeoff[method][key][1] for key in ordered]
-        ax.plot(xs, ys, marker="o", markersize=7, linewidth=2.2, label=method, color=METHOD_COLORS[method])
-        for x, y, label in zip(xs, ys, ordered, strict=True):
-            ax.annotate(f"λ={label}", (x, y), textcoords="offset points", xytext=(6, 5), fontsize=8)
+        for method in ("Combined", "Greedy"):
+            xs = [tradeoff[method][key][0] for key in ordered]
+            ys = [tradeoff[method][key][1] for key in ordered]
+            ax.plot(xs, ys, marker="o", markersize=7, linewidth=2.2, label=method, color=METHOD_COLORS[method])
+            for x, y, label in zip(xs, ys, ordered, strict=True):
+                ax.annotate(f"λ={label}", (x, y), textcoords="offset points", xytext=(6, 5), fontsize=8)
+    else:
+        for method in ("Cold", "Combined"):
+            rows = [row for row in quantum_tradeoff_rows if row["method"] == method]
+            rows.sort(key=lambda row: float(row["lambda_switch"]))
+            xs = [float(row["cumulative_switches"]) for row in rows]
+            ys = [float(row["cumulative_interference"]) for row in rows]
+            ax.plot(xs, ys, marker="o", markersize=7, linewidth=2.2, label=method, color=METHOD_COLORS[method])
+            for row, x, y in zip(rows, xs, ys, strict=True):
+                ax.annotate(
+                    f"λ={float(row['lambda_switch']):.2f}",
+                    (x, y),
+                    textcoords="offset points",
+                    xytext=(6, 5),
+                    fontsize=8,
+                )
 
     ax.set_xlabel("Cumulative switches")
     ax.set_ylabel("Cumulative interference")
@@ -241,21 +296,37 @@ def make_f4(output_dir: Path) -> None:
     save_figure(fig, output_dir / "F4_interference_switching_tradeoff.png")
 
 
-def make_f5(output_dir: Path) -> None:
+def make_f5(output_dir: Path, quantum_transfer_rows: list[dict[str, object]] | None = None) -> None:
     fig, ax = plt.subplots(figsize=(8.9, 5.1))
-    records = build_transfer_gain_records()
-    for regime in ("stationary", "gradual", "sudden"):
-        mask = records["regime"] == regime
-        ax.scatter(
-            records["delta"][mask],
-            records["gain"][mask],
-            s=56,
-            alpha=0.88,
-            color=REGIME_COLORS[regime],
-            label=regime.capitalize(),
-            edgecolor="white",
-            linewidth=0.6,
-        )
+    if quantum_transfer_rows is None:
+        records = build_transfer_gain_records()
+        for regime in ("stationary", "gradual", "sudden"):
+            mask = records["regime"] == regime
+            ax.scatter(
+                records["delta"][mask],
+                records["gain"][mask],
+                s=56,
+                alpha=0.88,
+                color=REGIME_COLORS[regime],
+                label=regime.capitalize(),
+                edgecolor="white",
+                linewidth=0.6,
+            )
+    else:
+        for regime in ("stationary", "gradual", "sudden"):
+            rows = [row for row in quantum_transfer_rows if row["regime"] == regime]
+            xs = [float(row["delta"]) for row in rows]
+            ys = [float(row["transfer_gain"]) for row in rows]
+            ax.scatter(
+                xs,
+                ys,
+                s=56,
+                alpha=0.88,
+                color=REGIME_COLORS[regime],
+                label=regime.capitalize(),
+                edgecolor="white",
+                linewidth=0.6,
+            )
     ax.axvline(0.35, color="#C1121F", linestyle="--", linewidth=1.3, alpha=0.9)
     ax.axhline(0.0, color="#555555", linestyle=":", linewidth=1.0)
     ax.text(0.355, ax.get_ylim()[1] * 0.84, "reset threshold", color="#C1121F", fontsize=9, weight="bold")
@@ -384,18 +455,21 @@ def main() -> None:
     methods = dict(base_methods)
     quantum_metadata = None
     quantum_traces = None
+    quantum_tradeoff_rows = None
+    quantum_transfer_rows = None
 
     if args.rollout_source == "quantum":
         quantum_metadata, quantum_methods, quantum_traces = load_quantum_rollout_dataset(args.quantum_prefix)
         methods = {**methods, **quantum_methods}
+        _, quantum_tradeoff_rows, quantum_transfer_rows = load_quantum_benchmark_dataset(args.quantum_benchmark_prefix)
 
     combined_allocations = base_methods["Combined"].allocations
 
     make_f1(sequence, combined_allocations, output_dir)
     make_f2(methods, output_dir, quantum_metadata=quantum_metadata)
     make_f3(methods, output_dir)
-    make_f4(output_dir)
-    make_f5(output_dir)
+    make_f4(output_dir, quantum_tradeoff_rows=quantum_tradeoff_rows)
+    make_f5(output_dir, quantum_transfer_rows=quantum_transfer_rows)
     make_f6(methods, output_dir, quantum_metadata=quantum_metadata, quantum_traces=quantum_traces)
     make_f7(output_dir)
     make_f8(output_dir)

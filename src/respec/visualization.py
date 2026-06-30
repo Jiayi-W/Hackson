@@ -19,6 +19,7 @@ REGIME_COLORS = {
     "stationary": "#577590",
     "gradual": "#43AA8B",
     "sudden": "#F94144",
+    "continuous_sudden": "#F3722C",
 }
 
 
@@ -55,4 +56,3 @@ def save_figure(fig, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=240)
     plt.close(fig)
-

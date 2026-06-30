@@ -1,0 +1,3 @@
+regime,seed,method,pretty_method,cumulative_cost,cumulative_interference,cumulative_switches,mean_feasible_fraction,mean_success_probability,mean_expected_cost,mean_cx_count,mean_circuit_depth,total_wall_seconds
+continuous_sudden,405,Cold,Cold,0.8972974621526626,0.11729746215266247,2.6,1.0,0.006266276041666667,0.44171099823467386,87.5,103.58333333333333,48.18992566689849
+continuous_sudden,406,Cold,Cold,0.7873687673791334,0.18736876737913347,1.9999999999999998,1.0,0.08748372395833333,0.4385938995455699,88.5,102.66666666666667,48.18060211511329

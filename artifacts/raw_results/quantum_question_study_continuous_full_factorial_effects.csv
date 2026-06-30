@@ -1,0 +1,43 @@
+regime,seed,method,pretty_method,state_reuse,parameter_reuse,improvement_vs_cold
+stationary,101,Param,Parameter Transfer,0,1,0.09711018025563689
+stationary,101,State,State Warm Start,1,0,0.5937823626556975
+stationary,101,Combined,Combined,1,1,0.6903548262385949
+stationary,102,Param,Parameter Transfer,0,1,-0.26903464074356265
+stationary,102,State,State Warm Start,1,0,1.1729234453570425
+stationary,102,Combined,Combined,1,1,1.1729234453570425
+gradual,201,Param,Parameter Transfer,0,1,-0.04046878455533642
+gradual,201,State,State Warm Start,1,0,1.279173482445042
+gradual,201,Combined,Combined,1,1,1.279173482445042
+gradual,202,Param,Parameter Transfer,0,1,-0.24
+gradual,202,State,State Warm Start,1,0,0.3
+gradual,202,Combined,Combined,1,1,-1.4999999999999996
+gradual,203,Param,Parameter Transfer,0,1,0.06877570377448017
+gradual,203,State,State Warm Start,1,0,0.6087757037744802
+gradual,203,Combined,Combined,1,1,-1.851294261792849
+gradual,204,Param,Parameter Transfer,0,1,0.37739861409598197
+gradual,204,State,State Warm Start,1,0,1.05664919265064
+gradual,204,Combined,Combined,1,1,1.11664919265064
+sudden,301,Param,Parameter Transfer,0,1,0.5058692072525925
+sudden,301,State,State Warm Start,1,0,0.8474031543660185
+sudden,301,Combined,Combined,1,1,1.0941766032396525
+sudden,302,Param,Parameter Transfer,0,1,-0.42760483828504503
+sudden,302,State,State Warm Start,1,0,0.059043942230359026
+sudden,302,Combined,Combined,1,1,0.059043942230359026
+sudden,303,Param,Parameter Transfer,0,1,0.26105749718202986
+sudden,303,State,State Warm Start,1,0,1.1123424211568667
+sudden,303,Combined,Combined,1,1,0.764681786301583
+sudden,304,Param,Parameter Transfer,0,1,-0.08089525390384011
+sudden,304,State,State Warm Start,1,0,1.0534224255136215
+sudden,304,Combined,Combined,1,1,-1.2798126351092898
+continuous_sudden,401,Param,Parameter Transfer,0,1,-0.3503922665540933
+continuous_sudden,401,State,State Warm Start,1,0,0.3644319550185102
+continuous_sudden,401,Combined,Combined,1,1,0.7244319550185102
+continuous_sudden,402,Param,Parameter Transfer,0,1,-0.3600000000000001
+continuous_sudden,402,State,State Warm Start,1,0,0.3344992816160637
+continuous_sudden,402,Combined,Combined,1,1,0.7360099664523427
+continuous_sudden,403,Param,Parameter Transfer,0,1,0.1915503492052515
+continuous_sudden,403,State,State Warm Start,1,0,0.7915503492052516
+continuous_sudden,403,Combined,Combined,1,1,0.3787471455176792
+continuous_sudden,404,Param,Parameter Transfer,0,1,-0.27373601723557006
+continuous_sudden,404,State,State Warm Start,1,0,0.5475329155196587
+continuous_sudden,404,Combined,Combined,1,1,0.8881937159748754

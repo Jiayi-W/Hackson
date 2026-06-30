@@ -17,6 +17,18 @@ BASE_POSITIONS = np.array(
     dtype=float,
 )
 
+CONTINUOUS_SUDDEN_ANCHORS = np.array(
+    [
+        [0.12, 0.14],
+        [0.86, 0.18],
+        [0.17, 0.87],
+        [0.88, 0.84],
+        [0.52, 0.14],
+        [0.50, 0.88],
+    ],
+    dtype=float,
+)
+
 
 def _reflect(points: np.ndarray) -> np.ndarray:
     reflected = points.copy()
@@ -49,7 +61,7 @@ def weighted_bray_curtis_change(current: np.ndarray, previous: np.ndarray, eps: 
 def generate_sequence(
     n_users: int,
     time_steps: int,
-    regime: Literal["stationary", "gradual", "sudden"],
+    regime: Literal["stationary", "gradual", "sudden", "continuous_sudden"],
     seed: int,
 ) -> DynamicSequence:
     rng = np.random.default_rng(seed)
@@ -63,16 +75,23 @@ def generate_sequence(
 
     for t in range(time_steps):
         if t > 0 and regime != "stationary":
-            step = rng.normal(0.0, 0.03, size=positions.shape)
+            if regime == "continuous_sudden":
+                step = rng.normal(0.0, 0.06, size=positions.shape) + rng.normal(0.0, 0.03, size=(1, 2))
+            else:
+                step = rng.normal(0.0, 0.03, size=positions.shape)
             positions = _reflect(positions + step)
 
             if regime == "sudden" and t == 5:
                 centroid = positions.mean(axis=0)
                 jump_target = np.clip(0.92 * centroid + np.array([-0.04, 0.02]), 0.06, 0.94)
                 positions[moved_user] = jump_target
+            elif regime == "continuous_sudden":
+                jump_user = (t - 1) % n_users
+                anchor = CONTINUOUS_SUDDEN_ANCHORS[(t - 1) % len(CONTINUOUS_SUDDEN_ANCHORS)]
+                jump_target = 0.88 * anchor + 0.12 * rng.uniform(0.05, 0.95, size=2)
+                positions[jump_user] = _reflect(jump_target.reshape(1, 2))[0]
 
         weights = compute_weight_matrix(positions)
         snapshots.append(Snapshot(t=t, positions=positions.copy(), weights=weights.copy()))
 
     return DynamicSequence(regime=regime, seed=seed, snapshots=tuple(snapshots))
-

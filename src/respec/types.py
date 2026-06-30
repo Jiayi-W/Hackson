@@ -15,7 +15,7 @@ class Snapshot:
 
 @dataclass(frozen=True)
 class DynamicSequence:
-    regime: Literal["stationary", "gradual", "sudden"]
+    regime: Literal["stationary", "gradual", "sudden", "continuous_sudden"]
     seed: int
     snapshots: tuple[Snapshot, ...]
 

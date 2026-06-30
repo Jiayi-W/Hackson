@@ -16,7 +16,7 @@ from respec.strategies import run_quantum_strategy_suite
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a Qiskit-backed dynamic QAOA rollout.")
-    parser.add_argument("--regime", default="gradual", choices=["stationary", "gradual", "sudden"])
+    parser.add_argument("--regime", default="gradual", choices=["stationary", "gradual", "sudden", "continuous_sudden"])
     parser.add_argument("--seed", type=int, default=11)
     parser.add_argument("--time-steps", type=int, default=5)
     parser.add_argument("--evaluations", type=int, default=8)

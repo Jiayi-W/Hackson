@@ -75,6 +75,14 @@ def load_question_dataset(prefix: str) -> dict[str, object]:
     }
 
 
+def _regime_label(regime: str) -> str:
+    return regime.replace("_", " ").title()
+
+
+def _study_regimes(metadata: dict[str, object]) -> tuple[str, ...]:
+    return tuple(str(regime) for regime in metadata.get("regimes", ("stationary", "gradual", "sudden")))
+
+
 def _representative_seed(metadata: dict[str, object], regime: str) -> int:
     return int(metadata["representative_seeds"][regime])
 
@@ -95,8 +103,8 @@ def _allocation_matrix(
     return data
 
 
-def _jump_snapshot(step_rows: list[dict[str, object]], regime: str, seed: int) -> int | None:
-    if regime != "sudden":
+def _peak_change_snapshot(step_rows: list[dict[str, object]], regime: str, seed: int) -> int | None:
+    if regime == "stationary":
         return None
     candidates = [
         row
@@ -149,7 +157,7 @@ def _plot_network_panel(
     allocation_rows: list[dict[str, object]],
     position_rows: list[dict[str, object]],
     edge_rows: list[dict[str, object]],
-    jump_snapshot: int | None,
+    peak_snapshot: int | None,
 ) -> None:
     ax.clear()
     positions = _positions(position_rows, regime, seed, snapshot_t, n_users)
@@ -177,13 +185,13 @@ def _plot_network_panel(
             )
 
     moved_user = None
-    if jump_snapshot is not None and snapshot_t == jump_snapshot and snapshot_t > 0:
+    if peak_snapshot is not None and snapshot_t == peak_snapshot and snapshot_t > 0:
         previous_positions = _positions(position_rows, regime, seed, snapshot_t - 1, n_users)
         displacement = np.linalg.norm(positions - previous_positions, axis=1)
         moved_user = int(np.argmax(displacement))
 
     for user, (x, y) in enumerate(positions):
-        halo = "#F94144" if moved_user == user else "#FCFBF8"
+        halo = REGIME_COLORS[regime] if moved_user == user else "#FCFBF8"
         ax.scatter(x, y, s=365, color=halo, edgecolor="none", zorder=2)
         ax.scatter(
             x,
@@ -197,16 +205,17 @@ def _plot_network_panel(
         ax.text(x, y, f"U{user}", ha="center", va="center", color="white", weight="bold", fontsize=9)
 
     if moved_user is not None:
+        marker = "jump" if regime == "sudden" else "peak drift"
         ax.text(
             positions[moved_user, 0] + 0.03,
             positions[moved_user, 1] + 0.05,
-            "jump",
-            color="#C1121F",
+            marker,
+            color=REGIME_COLORS[regime],
             fontsize=9,
             weight="bold",
         )
 
-    ax.set_title(f"User positions and interference graph\n{regime.capitalize()} | Combined allocation | t={snapshot_t}")
+    ax.set_title(f"User positions and interference graph\n{_regime_label(regime)} | Combined allocation | t={snapshot_t}")
     ax.set_xlim(0.03, 0.97)
     ax.set_ylim(0.03, 0.97)
     ax.set_xticks([])
@@ -247,7 +256,7 @@ def _plot_current_panel(
     frame: int,
     regime: str,
     regime_rows: dict[str, list[dict[str, object]]],
-    jump_snapshot: int | None,
+    peak_snapshot: int | None,
     step_cost_ymax: float,
 ) -> None:
     ax.clear()
@@ -274,7 +283,12 @@ def _plot_current_panel(
     gain = cold_cost - combined_cost
     delta = float(regime_rows["Cold"][frame]["delta"])
     winner = min(current_rows, key=lambda row: float(row["step_cost"]))["method"]
-    tag = "jump" if jump_snapshot is not None and frame == jump_snapshot else "steady"
+    if regime == "continuous_sudden":
+        tag = "peak drift" if peak_snapshot is not None and frame == peak_snapshot else "high drift"
+    elif peak_snapshot is not None and frame == peak_snapshot:
+        tag = "jump"
+    else:
+        tag = "steady"
 
     info_lines = [
         f"Delta_t = {delta:.3f}",
@@ -298,8 +312,8 @@ def _plot_current_panel(
     ax.set_xticklabels(["Cold", "Param", "State", "Combined"], rotation=14)
     ax.set_ylabel("Step cost J_t")
     ax.set_ylim(0.0, step_cost_ymax)
-    if regime == "sudden" and jump_snapshot is not None:
-        ax.axhline(combined_cost, color="#C1121F", linestyle=":", linewidth=1.1, alpha=0.75)
+    if regime in {"sudden", "continuous_sudden"} and peak_snapshot is not None:
+        ax.axhline(combined_cost, color=REGIME_COLORS[regime], linestyle=":", linewidth=1.1, alpha=0.75)
     polish_axes(ax)
 
 
@@ -318,7 +332,7 @@ def render_regime_dashboard(
     seed = _representative_seed(metadata, regime)
     n_users = int(metadata["n_users"])
     time_steps = int(metadata["time_steps"])
-    jump_snapshot = _jump_snapshot(step_rows, regime, seed)
+    peak_snapshot = _peak_change_snapshot(step_rows, regime, seed)
     regime_rows = _regime_step_rows(step_rows, regime, seed)
 
     cumulative_values = [
@@ -358,7 +372,7 @@ def render_regime_dashboard(
             allocation_rows=allocation_rows,
             position_rows=position_rows,
             edge_rows=edge_rows,
-            jump_snapshot=jump_snapshot,
+            peak_snapshot=peak_snapshot,
         )
         _plot_cumulative_panel(
             ax_cumulative,
@@ -371,11 +385,11 @@ def render_regime_dashboard(
             frame=frame,
             regime=regime,
             regime_rows=regime_rows,
-            jump_snapshot=jump_snapshot,
+            peak_snapshot=peak_snapshot,
             step_cost_ymax=step_cost_ymax,
         )
         fig.suptitle(
-            f"{regime.capitalize()} dynamics dashboard | linked motion + data view",
+            f"{_regime_label(regime)} dynamics dashboard | linked motion + data view",
             fontsize=16,
             y=0.98,
             weight="bold",
@@ -394,7 +408,7 @@ def main() -> None:
     dataset = load_question_dataset(args.input_prefix)
     output_dir = Path(args.output_dir).expanduser()
 
-    for regime in ("stationary", "gradual", "sudden"):
+    for regime in _study_regimes(dataset["metadata"]):
         render_regime_dashboard(
             regime=regime,
             metadata=dataset["metadata"],

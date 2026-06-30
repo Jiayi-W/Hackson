@@ -1,0 +1,21 @@
+{
+  "study_type": "gradual_seed_extension",
+  "base_prefix": "quantum_question_study_continuous_full",
+  "regime": "gradual",
+  "seeds": [
+    205,
+    206
+  ],
+  "methods": [
+    "Param",
+    "State",
+    "Combined"
+  ],
+  "n_users": 5,
+  "n_channels": 3,
+  "time_steps": 12,
+  "lambda_switch": 0.3,
+  "optimization_shots": 256,
+  "final_shots": 2048,
+  "evaluations": 24
+}

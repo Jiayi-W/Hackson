@@ -1,0 +1,70 @@
+{
+  "study_type": "quantum_shot_based",
+  "n_users": 5,
+  "n_channels": 3,
+  "time_steps": 6,
+  "lambda_switch": 0.3,
+  "lambda_scan": [
+    0.3
+  ],
+  "methods": [
+    "Cold",
+    "Param",
+    "State",
+    "Combined"
+  ],
+  "regimes": [
+    "stationary",
+    "gradual",
+    "sudden",
+    "continuous_sudden"
+  ],
+  "seeds_by_regime": {
+    "stationary": [
+      101
+    ],
+    "gradual": [
+      201
+    ],
+    "sudden": [
+      304
+    ],
+    "continuous_sudden": [
+      401
+    ]
+  },
+  "representative_seeds": {
+    "stationary": 101,
+    "gradual": 201,
+    "sudden": 304,
+    "continuous_sudden": 401
+  },
+  "optimization_shots": 16,
+  "final_shots": 32,
+  "evaluations": 5,
+  "n_jobs": 2,
+  "full_seed_bank": {
+    "stationary": [
+      101,
+      102
+    ],
+    "gradual": [
+      201,
+      202,
+      203,
+      204
+    ],
+    "sudden": [
+      301,
+      302,
+      303,
+      304
+    ],
+    "continuous_sudden": [
+      401,
+      402,
+      403,
+      404
+    ]
+  }
+}

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 from pathlib import Path
 import sys
 
@@ -16,6 +17,8 @@ import numpy as np
 from matplotlib.animation import FuncAnimation, PillowWriter
 from matplotlib.colors import TwoSlopeNorm
 
+from respec.environment import generate_sequence
+from respec.heuristics import rollout_heuristic
 from respec.question_study import QUESTION_METHODS, pretty_method_label
 from respec.visualization import (
     CHANNEL_COLORS,
@@ -103,13 +106,63 @@ def load_question_dataset(prefix: str) -> dict[str, object]:
         "trace_rows": _parse_rows(
             "trace_profiles",
             {"seed", "snapshot_t", "evaluation"},
-            {"best_so_far_cost"},
+            {"objective_value", "best_so_far_cost"},
         ),
     }
 
 
 def _method_pretty(method: str) -> str:
     return pretty_method_label(method)
+
+
+def _regime_label(regime: str) -> str:
+    return regime.replace("_", " ").title()
+
+
+def _study_regimes(metadata: dict[str, object]) -> tuple[str, ...]:
+    return tuple(str(regime) for regime in metadata.get("regimes", ("stationary", "gradual", "sudden")))
+
+
+def _dynamic_regimes(metadata: dict[str, object]) -> tuple[str, ...]:
+    return tuple(regime for regime in _study_regimes(metadata) if regime != "stationary")
+
+
+def _focus_animation_regime(metadata: dict[str, object]) -> str:
+    dynamic_regimes = _dynamic_regimes(metadata)
+    if "continuous_sudden" in dynamic_regimes:
+        return "continuous_sudden"
+    if "sudden" in dynamic_regimes:
+        return "sudden"
+    return dynamic_regimes[-1]
+
+
+def _question_main_regimes(metadata: dict[str, object]) -> tuple[str, ...]:
+    preferred = ("stationary", "gradual", "continuous_sudden")
+    available = set(_study_regimes(metadata))
+    return tuple(regime for regime in preferred if regime in available)
+
+
+def _axes_grid(
+    count: int,
+    *,
+    sharey: bool = False,
+    panel_width: float = 4.6,
+    panel_height: float = 4.5,
+) -> tuple[plt.Figure, np.ndarray]:
+    if count <= 3:
+        rows = 1
+        cols = count
+    elif count == 4:
+        rows = 2
+        cols = 2
+    else:
+        cols = 3
+        rows = int(math.ceil(count / cols))
+    fig, axes = plt.subplots(rows, cols, figsize=(panel_width * cols, panel_height * rows), sharey=sharey, squeeze=False)
+    flat = axes.ravel()
+    for extra in flat[count:]:
+        fig.delaxes(extra)
+    return fig, flat[:count]
 
 
 def _representative_seed(metadata: dict[str, object], regime: str) -> int:
@@ -132,7 +185,9 @@ def _allocation_matrix(
     return data
 
 
-def _jump_snapshot(step_rows: list[dict[str, object]], regime: str, seed: int) -> int | None:
+def _peak_change_snapshot(step_rows: list[dict[str, object]], regime: str, seed: int) -> int | None:
+    if regime == "stationary":
+        return None
     candidates = [row for row in step_rows if row["regime"] == regime and row["seed"] == seed and row["method"] == "Cold" and int(row["snapshot_t"]) > 0]
     if not candidates:
         return None
@@ -159,15 +214,39 @@ def _positions(position_rows: list[dict[str, object]], regime: str, seed: int, s
     return positions
 
 
-def make_f1_main_result(summary_rows: list[dict[str, object]], output_dir: Path) -> None:
+def _summary_rows_for_regime(
+    summary_rows: list[dict[str, object]],
+    metadata: dict[str, object],
+    regime: str,
+) -> list[dict[str, object]]:
+    rows = [row.copy() for row in summary_rows if row["regime"] == regime]
+    rows.extend(row.copy() for row in _extension_summary_rows_for_regime(regime))
+
+    cold_cost_by_seed = {
+        int(row["seed"]): float(row["cumulative_cost"])
+        for row in rows
+        if row["method"] == "Cold"
+    }
+    for row in rows:
+        seed = int(row["seed"])
+        cumulative_cost = float(row["cumulative_cost"])
+        if row["method"] == "Cold":
+            row["improvement_vs_cold"] = 0.0
+        else:
+            row["improvement_vs_cold"] = cold_cost_by_seed[seed] - cumulative_cost
+    return rows
+
+
+def make_f1_main_result(summary_rows: list[dict[str, object]], metadata: dict[str, object], output_dir: Path) -> None:
     apply_style()
-    fig, axes = plt.subplots(1, 3, figsize=(15.0, 4.8), sharey=True)
+    regimes = _question_main_regimes(metadata)
+    fig, axes = _axes_grid(len(regimes), sharey=True, panel_width=4.7, panel_height=4.7)
     methods = QUESTION_METHODS
-    regimes = ("stationary", "gradual", "sudden")
 
     for ax, regime in zip(axes, regimes, strict=True):
+        regime_rows = _summary_rows_for_regime(summary_rows, metadata, regime)
         data = [
-            [float(row["offline_gap"]) for row in summary_rows if row["regime"] == regime and row["method"] == method]
+            [float(row["cumulative_cost"]) for row in regime_rows if row["method"] == method]
             for method in methods
         ]
         positions = np.arange(1, len(methods) + 1)
@@ -188,7 +267,7 @@ def make_f1_main_result(summary_rows: list[dict[str, object]], output_dir: Path)
         rng = np.random.default_rng(abs(hash(regime)) % (2 ** 32))
         for idx, method in enumerate(methods, start=1):
             values = np.array(
-                [float(row["offline_gap"]) for row in summary_rows if row["regime"] == regime and row["method"] == method],
+                [float(row["cumulative_cost"]) for row in regime_rows if row["method"] == method],
                 dtype=float,
             )
             jitter = rng.normal(0.0, 0.045, size=len(values))
@@ -204,39 +283,48 @@ def make_f1_main_result(summary_rows: list[dict[str, object]], output_dir: Path)
             )
 
         combined = np.array(
-            [float(row["improvement_vs_cold"]) for row in summary_rows if row["regime"] == regime and row["method"] == "Combined"],
+            [float(row["improvement_vs_cold"]) for row in regime_rows if row["method"] == "Combined"],
             dtype=float,
         )
+        seed_count = len({int(row["seed"]) for row in regime_rows})
         ax.text(
             0.03,
             0.94,
-            f"Median Combined gain = {np.median(combined):+.3f}",
+            f"Median Combined gain = {np.median(combined):+.3f}\nSeeds = {seed_count}",
             transform=ax.transAxes,
             ha="left",
             va="top",
             fontsize=9,
             color=REGIME_COLORS[regime],
             weight="bold",
+            bbox={"boxstyle": "round,pad=0.26", "facecolor": "#FCFBF8", "edgecolor": "#D9D3C7"},
         )
-        ax.set_title(regime.capitalize())
+        ax.set_title(_regime_label(regime))
         ax.set_xticks(positions)
-        ax.set_xticklabels(["Cold", "Param", "State", "Combined"], rotation=18)
+        ax.set_xticklabels(["Cold", "Parameter\nTransfer", "State\nWarm Start", "Combined"], rotation=0)
         ax.set_xlabel("Dynamic strategy")
         polish_axes(ax)
 
-    axes[0].set_ylabel("Cumulative gap above offline DP")
-    fig.suptitle("F1. Warm-Start Benefit by Network Regime", fontsize=15, y=1.03, weight="bold")
+    axes[0].set_ylabel("Cumulative total cost")
+    fig.suptitle("Warm-Start Benefit by Network Regime", fontsize=15, y=1.02, weight="bold")
     save_figure(fig, output_dir / "F1_main_result_by_regime.png")
 
 
-def make_f2_factorial_heatmaps(factorial_rows: list[dict[str, object]], output_dir: Path) -> None:
+def make_f2_factorial_heatmaps(summary_rows: list[dict[str, object]], metadata: dict[str, object], output_dir: Path) -> None:
     apply_style()
-    fig, axes = plt.subplots(1, 3, figsize=(14.5, 4.6), sharey=True)
-    regimes = ("stationary", "gradual", "sudden")
+    regimes = _question_main_regimes(metadata)
+    fig, axes = _axes_grid(len(regimes), sharey=True, panel_width=4.6, panel_height=4.5)
 
     medians: list[float] = [0.0]
-    for row in factorial_rows:
-        medians.append(float(row["improvement_vs_cold"]))
+    for regime in regimes:
+        regime_rows = _summary_rows_for_regime(summary_rows, metadata, regime)
+        for method in QUESTION_METHODS:
+            if method == "Cold":
+                medians.append(0.0)
+                continue
+            method_values = [float(row["improvement_vs_cold"]) for row in regime_rows if row["method"] == method]
+            if method_values:
+                medians.append(float(np.median(np.array(method_values, dtype=float))))
     bound = max(abs(min(medians)), abs(max(medians)), 1e-6)
     norm = TwoSlopeNorm(vmin=-bound, vcenter=0.0, vmax=bound)
 
@@ -248,6 +336,7 @@ def make_f2_factorial_heatmaps(factorial_rows: list[dict[str, object]], output_d
     }
 
     for ax, regime in zip(axes, regimes, strict=True):
+        regime_rows = _summary_rows_for_regime(summary_rows, metadata, regime)
         matrix = np.zeros((2, 2), dtype=float)
         labels: dict[tuple[int, int], str] = {}
         for row_index in range(2):
@@ -258,15 +347,15 @@ def make_f2_factorial_heatmaps(factorial_rows: list[dict[str, object]], output_d
                 else:
                     matches = [
                         float(row["improvement_vs_cold"])
-                        for row in factorial_rows
-                        if row["regime"] == regime and row["method"] == method
+                        for row in regime_rows
+                        if row["method"] == method
                     ]
                     value = float(np.median(np.array(matches, dtype=float)))
                 matrix[row_index, col_index] = value
                 labels[(row_index, col_index)] = method
 
         im = ax.imshow(matrix, cmap="RdYlGn", norm=norm)
-        ax.set_title(regime.capitalize())
+        ax.set_title(_regime_label(regime))
         ax.set_xticks([0, 1])
         ax.set_xticklabels(["No Param", "Param"])
         ax.set_yticks([0, 1])
@@ -283,18 +372,30 @@ def make_f2_factorial_heatmaps(factorial_rows: list[dict[str, object]], output_d
                     va="center",
                     fontsize=9,
                     weight="bold",
-                    color="#1F1F1F",
-                )
+                        color="#1F1F1F",
+                    )
         ax.set_xticks(np.arange(-0.5, 2.0, 1.0), minor=True)
         ax.set_yticks(np.arange(-0.5, 2.0, 1.0), minor=True)
         ax.grid(False)
         ax.grid(which="minor", color="#E9E3D8", linestyle="-", linewidth=1.0)
         ax.tick_params(which="minor", bottom=False, left=False)
+        seed_count = len({int(row["seed"]) for row in regime_rows})
+        ax.text(
+            0.03,
+            0.97,
+            f"Seeds = {seed_count}",
+            transform=ax.transAxes,
+            ha="left",
+            va="top",
+            fontsize=8.5,
+            color=REGIME_COLORS[regime],
+            weight="bold",
+        )
 
     axes[0].set_ylabel("State reuse")
     cbar = fig.colorbar(im, ax=axes, fraction=0.04, pad=0.02)
     cbar.set_label("Median improvement vs Cold")
-    fig.suptitle("F2. State and Parameter Reuse Decomposition", fontsize=15, y=1.03, weight="bold")
+    fig.suptitle("State and Parameter Reuse Decomposition", fontsize=15, y=1.02, weight="bold")
     save_figure(fig, output_dir / "F2_factorial_reuse_heatmaps.png")
 
 
@@ -314,11 +415,11 @@ def _plot_binned_trend(ax, xs: np.ndarray, ys: np.ndarray, color: str) -> None:
         ax.plot(centers, medians, color=color, linewidth=2.0, alpha=0.95)
 
 
-def make_f3_transfer_gain(transfer_rows: list[dict[str, object]], output_dir: Path) -> None:
+def make_f3_transfer_gain(transfer_rows: list[dict[str, object]], metadata: dict[str, object], output_dir: Path) -> None:
     apply_style()
     fig, axes = plt.subplots(1, 3, figsize=(15.0, 4.8), sharey=True)
     methods = ("Param", "State", "Combined")
-    regimes = ("stationary", "gradual", "sudden")
+    regimes = _study_regimes(metadata)
 
     for ax, method in zip(axes, methods, strict=True):
         for regime in regimes:
@@ -331,7 +432,7 @@ def make_f3_transfer_gain(transfer_rows: list[dict[str, object]], output_dir: Pa
                 s=34,
                 alpha=0.78,
                 color=REGIME_COLORS[regime],
-                label=regime.capitalize(),
+                label=_regime_label(regime),
                 edgecolor="white",
                 linewidth=0.5,
             )
@@ -342,22 +443,19 @@ def make_f3_transfer_gain(transfer_rows: list[dict[str, object]], output_dir: Pa
         polish_axes(ax)
 
     axes[0].set_ylabel("Step gain vs Cold")
-    axes[0].legend(ncol=1, fontsize=8)
+    axes[0].legend(ncol=1 if len(regimes) <= 3 else 2, fontsize=8)
     fig.suptitle("F3. Transfer Gain vs Graph Change", fontsize=15, y=1.03, weight="bold")
     save_figure(fig, output_dir / "F3_transfer_gain_vs_graph_change.png")
 
 
-def make_f4_adaptation_traces(trace_rows: list[dict[str, object]], output_dir: Path) -> None:
+def make_f4_adaptation_traces(trace_rows: list[dict[str, object]], metadata: dict[str, object], output_dir: Path) -> None:
     apply_style()
-    fig, axes = plt.subplots(1, 2, figsize=(12.8, 4.8), sharey=True)
-    scenarios = ("gradual", "sudden")
+    scenarios = _dynamic_regimes(metadata)
+    fig, axes = _axes_grid(len(scenarios), sharey=True, panel_width=4.4, panel_height=4.7)
 
     for ax, scenario in zip(axes, scenarios, strict=True):
         for method in QUESTION_METHODS:
-            rows = [
-                row for row in trace_rows
-                if row["scenario"] == scenario and row["method"] == method
-            ]
+            rows = [row for row in trace_rows if row["scenario"] == scenario and row["method"] == method]
             rows.sort(key=lambda row: int(row["evaluation"]))
             evaluations = np.array([int(row["evaluation"]) for row in rows], dtype=int)
             values = np.array([float(row["best_so_far_cost"]) for row in rows], dtype=float)
@@ -369,13 +467,13 @@ def make_f4_adaptation_traces(trace_rows: list[dict[str, object]], output_dir: P
                 color=METHOD_COLORS[method],
                 label=method,
             )
-        ax.set_title(f"{scenario.capitalize()} change")
+        ax.set_title(f"{_regime_label(scenario)} change")
         ax.set_xlabel("Evaluation")
         polish_axes(ax)
 
     axes[0].set_ylabel("Best-so-far cost")
     axes[0].legend(ncol=2, fontsize=8)
-    fig.suptitle("F4. Adaptation Traces Under Fixed Budget", fontsize=15, y=1.03, weight="bold")
+    fig.suptitle("F4. Adaptation Traces Under Fixed Budget", fontsize=15, y=1.02, weight="bold")
     save_figure(fig, output_dir / "F4_adaptation_traces.png")
 
 
@@ -388,14 +486,14 @@ def make_f5_allocation_timelines(
     apply_style()
     n_users = int(metadata["n_users"])
     time_steps = int(metadata["time_steps"])
-    fig, axes = plt.subplots(2, 2, figsize=(12.8, 7.0), sharex=True, sharey=True)
-    regimes = ("gradual", "sudden")
+    regimes = _dynamic_regimes(metadata)
     methods = ("Cold", "Combined")
     cmap = apply_style()
+    fig, axes = plt.subplots(len(regimes), len(methods), figsize=(12.8, 3.0 * len(regimes) + 1.2), sharex=True, sharey=True, squeeze=False)
 
     for row_index, regime in enumerate(regimes):
         seed = _representative_seed(metadata, regime)
-        jump_snapshot = _jump_snapshot(step_rows, regime, seed)
+        peak_snapshot = _peak_change_snapshot(step_rows, regime, seed)
         for col_index, method in enumerate(methods):
             ax = axes[row_index, col_index]
             data = _allocation_matrix(
@@ -407,26 +505,26 @@ def make_f5_allocation_timelines(
                 time_steps=time_steps,
             )
             im = ax.imshow(data, aspect="auto", cmap=cmap, vmin=0, vmax=2)
-            if regime == "sudden" and jump_snapshot is not None:
-                ax.axvline(jump_snapshot - 0.5, color="#C1121F", linestyle="--", linewidth=1.2, alpha=0.85)
-            ax.set_title(f"{regime.capitalize()} | {method}")
+            if peak_snapshot is not None and regime in {"sudden", "continuous_sudden"}:
+                ax.axvline(peak_snapshot - 0.5, color="#C1121F", linestyle="--", linewidth=1.2, alpha=0.85)
+            ax.set_title(f"{_regime_label(regime)} | {method}")
             ax.set_xticks(range(time_steps))
             ax.set_yticks(range(n_users))
             ax.set_yticklabels([f"User {idx}" for idx in range(n_users)])
             ax.set_xlabel("Snapshot t")
 
-    axes[0, 0].set_ylabel("User")
-    axes[1, 0].set_ylabel("User")
+    for row_index in range(len(regimes)):
+        axes[row_index, 0].set_ylabel("User")
     cbar = fig.colorbar(im, ax=axes, fraction=0.03, pad=0.02, ticks=[0, 1, 2])
     cbar.ax.set_yticklabels(["Ch 0", "Ch 1", "Ch 2"])
-    fig.suptitle("F5. Allocation Trajectories in Gradual and Sudden Regimes", fontsize=15, y=1.02, weight="bold")
+    fig.suptitle("F5. Allocation Trajectories Across Dynamic Regimes", fontsize=15, y=1.01, weight="bold")
     save_figure(fig, output_dir / "F5_allocation_timeline_heatmaps.png")
 
 
-def make_f6_tradeoff(tradeoff_rows: list[dict[str, object]], output_dir: Path) -> None:
+def make_f6_tradeoff(tradeoff_rows: list[dict[str, object]], metadata: dict[str, object], output_dir: Path) -> None:
     apply_style()
-    fig, axes = plt.subplots(1, 2, figsize=(12.8, 4.8), sharey=True)
-    regimes = ("gradual", "sudden")
+    regimes = _dynamic_regimes(metadata)
+    fig, axes = _axes_grid(len(regimes), sharey=True, panel_width=4.4, panel_height=4.7)
 
     for ax, regime in zip(axes, regimes, strict=True):
         regime_rows = [row for row in tradeoff_rows if row["regime"] == regime]
@@ -468,13 +566,13 @@ def make_f6_tradeoff(tradeoff_rows: list[dict[str, object]], output_dir: Path) -
                     xytext=label_offset,
                     fontsize=8,
                 )
-        ax.set_title(f"{regime.capitalize()} sequences")
+        ax.set_title(f"{_regime_label(regime)} sequences")
         ax.set_xlabel("Cumulative switches")
         polish_axes(ax)
 
     axes[0].set_ylabel("Cumulative interference")
     axes[0].legend()
-    fig.suptitle("F6. Interference-Switching Tradeoff Under λ Sweep", fontsize=15, y=1.03, weight="bold")
+    fig.suptitle("F6. Interference-Switching Tradeoff Under λ Sweep", fontsize=15, y=1.02, weight="bold")
     save_figure(fig, output_dir / "F6_interference_switching_tradeoff.png")
 
 
@@ -488,11 +586,11 @@ def make_f7_network_animation(
     fps: int,
 ) -> None:
     apply_style()
-    regime = "sudden"
+    regime = _focus_animation_regime(metadata)
     seed = _representative_seed(metadata, regime)
     n_users = int(metadata["n_users"])
     time_steps = int(metadata["time_steps"])
-    jump_snapshot = _jump_snapshot(step_rows, regime, seed)
+    peak_snapshot = _peak_change_snapshot(step_rows, regime, seed)
 
     deltas = {
         int(row["snapshot_t"]): float(row["delta"])
@@ -534,13 +632,13 @@ def make_f7_network_animation(
                 )
 
         moved_user = None
-        if jump_snapshot is not None and snapshot_t == jump_snapshot and snapshot_t > 0:
+        if peak_snapshot is not None and snapshot_t == peak_snapshot and snapshot_t > 0:
             prev = _positions(position_rows, regime, seed, snapshot_t - 1, n_users)
             displacement = np.linalg.norm(positions - prev, axis=1)
             moved_user = int(np.argmax(displacement))
 
         for user, (x, y) in enumerate(positions):
-            halo = "#F94144" if moved_user == user else "#FCFBF8"
+            halo = REGIME_COLORS[regime] if moved_user == user else "#FCFBF8"
             ax.scatter(x, y, s=360, color=halo, edgecolor="none", zorder=2)
             ax.scatter(
                 x,
@@ -553,7 +651,7 @@ def make_f7_network_animation(
             )
             ax.text(x, y, f"U{user}", ha="center", va="center", color="white", weight="bold", fontsize=9)
 
-        ax.set_title(f"Sudden sequence | Combined | t={snapshot_t}")
+        ax.set_title(f"{_regime_label(regime)} sequence | Combined | t={snapshot_t}")
         ax.text(
             0.02,
             0.98,
@@ -564,12 +662,13 @@ def make_f7_network_animation(
             fontsize=9,
             bbox={"boxstyle": "round,pad=0.28", "facecolor": "#FCFBF8", "edgecolor": "#D9D3C7"},
         )
-        if jump_snapshot is not None and snapshot_t == jump_snapshot and moved_user is not None:
+        if peak_snapshot is not None and snapshot_t == peak_snapshot and moved_user is not None:
+            marker = "jump" if regime == "sudden" else "peak drift"
             ax.text(
                 positions[moved_user, 0] + 0.03,
                 positions[moved_user, 1] + 0.05,
-                "jump",
-                color="#C1121F",
+                marker,
+                color=REGIME_COLORS[regime],
                 fontsize=9,
                 weight="bold",
             )
@@ -589,12 +688,13 @@ def make_f7_network_animation(
 
 def make_f8_optimization_race(
     trace_rows: list[dict[str, object]],
+    metadata: dict[str, object],
     output_dir: Path,
     fps: int,
 ) -> None:
     apply_style()
-    fig, axes = plt.subplots(1, 2, figsize=(12.6, 4.8), sharey=True)
-    scenarios = ("gradual", "sudden")
+    scenarios = _dynamic_regimes(metadata)
+    fig, axes = _axes_grid(len(scenarios), sharey=True, panel_width=4.3, panel_height=4.6)
     max_evaluation = max(int(row["evaluation"]) for row in trace_rows)
 
     def _draw_frame(frame: int) -> None:
@@ -618,19 +718,351 @@ def make_f8_optimization_race(
                     color=METHOD_COLORS[method],
                     label=method,
                 )
-            ax.set_title(f"{scenario.capitalize()} change")
+            ax.set_title(f"{_regime_label(scenario)} change")
             ax.set_xlabel("Evaluation")
             ax.set_xlim(1, max_evaluation)
             polish_axes(ax)
         axes[0].set_ylabel("Best-so-far cost")
         axes[0].legend(ncol=2, fontsize=8)
-        fig.suptitle(f"F8. Optimization Race Under Fixed Budget (eval {frame}/{max_evaluation})", fontsize=15, y=1.03, weight="bold")
+        fig.suptitle(f"F8. Optimization Race Under Fixed Budget (eval {frame}/{max_evaluation})", fontsize=15, y=1.02, weight="bold")
 
     animation = FuncAnimation(fig, _draw_frame, frames=range(1, max_evaluation + 1), interval=max(180, 1000 // max(fps, 1)))
     output_path = output_dir / "F8_optimization_race.gif"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     animation.save(output_path, writer=PillowWriter(fps=fps))
     plt.close(fig)
+
+
+def make_f9_combined_vs_state_seed_gaps(
+    summary_rows: list[dict[str, object]],
+    metadata: dict[str, object],
+    output_dir: Path,
+) -> None:
+    apply_style()
+    regimes = _study_regimes(metadata)
+    fig, axes = _axes_grid(len(regimes), sharey=True, panel_width=4.5, panel_height=4.7)
+
+    regime_values: dict[str, tuple[list[int], np.ndarray]] = {}
+    all_deltas: list[float] = []
+    for regime in regimes:
+        seeds = sorted({int(row["seed"]) for row in summary_rows if row["regime"] == regime})
+        deltas: list[float] = []
+        for seed in seeds:
+            state = next(
+                float(row["cumulative_cost"])
+                for row in summary_rows
+                if row["regime"] == regime and row["seed"] == seed and row["method"] == "State"
+            )
+            combined = next(
+                float(row["cumulative_cost"])
+                for row in summary_rows
+                if row["regime"] == regime and row["seed"] == seed and row["method"] == "Combined"
+            )
+            delta = combined - state
+            deltas.append(delta)
+            all_deltas.append(delta)
+        regime_values[regime] = (seeds, np.array(deltas, dtype=float))
+
+    bound = max(max(abs(value) for value in all_deltas), 0.2)
+
+    for ax, regime in zip(axes, regimes, strict=True):
+        seeds, deltas = regime_values[regime]
+        positions = np.arange(len(seeds), dtype=float)
+        ax.axhline(0.0, color="#555555", linestyle=":", linewidth=1.2)
+        ax.axhspan(-bound, 0.0, color=METHOD_COLORS["Combined"], alpha=0.08)
+        ax.axhspan(0.0, bound, color=METHOD_COLORS["State"], alpha=0.08)
+
+        for x, seed, delta in zip(positions, seeds, deltas.tolist(), strict=True):
+            color = METHOD_COLORS["Combined"] if delta < -1e-9 else METHOD_COLORS["State"] if delta > 1e-9 else "#6C757D"
+            ax.vlines(x, 0.0, delta, color=color, linewidth=2.1, alpha=0.78, zorder=2)
+            ax.scatter(x, delta, s=105, color=color, edgecolor="white", linewidth=0.8, zorder=3)
+            ax.text(x, delta + 0.04 * bound * (1 if delta >= 0 else -1), str(seed), ha="center", va="center", fontsize=8)
+
+        median = float(np.median(deltas))
+        wins = int(np.count_nonzero(deltas < -1e-9))
+        ties = int(np.count_nonzero(np.abs(deltas) <= 1e-9))
+        ax.scatter(
+            np.mean(positions) if len(positions) > 0 else 0.0,
+            median,
+            marker="D",
+            s=80,
+            color=REGIME_COLORS[regime],
+            edgecolor="white",
+            linewidth=0.9,
+            zorder=4,
+        )
+        ax.text(
+            0.03,
+            0.95,
+            f"Combined wins = {wins}/{len(deltas)}\nMedian Δ = {median:+.3f}\nTies = {ties}",
+            transform=ax.transAxes,
+            ha="left",
+            va="top",
+            fontsize=9,
+            color=REGIME_COLORS[regime],
+            weight="bold",
+            bbox={"boxstyle": "round,pad=0.26", "facecolor": "#FCFBF8", "edgecolor": "#D9D3C7"},
+        )
+        ax.set_title(_regime_label(regime))
+        ax.set_xticks(positions)
+        ax.set_xticklabels([f"seed {seed}" for seed in seeds], rotation=18 if len(seeds) > 2 else 0)
+        ax.set_xlabel("Sequence seed")
+        ax.set_ylim(-1.08 * bound, 1.08 * bound)
+        polish_axes(ax)
+
+    axes[0].set_ylabel("Cumulative cost gap\n(Combined - State)")
+    fig.text(0.5, -0.01, "Negative values mean Combined is better; positive values mean State is better.", ha="center", fontsize=10)
+    fig.suptitle("F9. Combined vs State Depends on Dynamic Regime", fontsize=15, y=1.03, weight="bold")
+    save_figure(fig, output_dir / "F9_combined_vs_state_seed_gaps.png")
+
+
+def _extension_summary_rows_for_regime(regime: str) -> list[dict[str, object]]:
+    raw_dir = ROOT / "artifacts" / "raw_results"
+    rows: list[dict[str, object]] = []
+    for path in sorted(raw_dir.glob(f"{regime}_extension_*_summary.csv")):
+        for row in _read_csv_rows(path):
+            parsed: dict[str, object] = {}
+            for key, value in row.items():
+                if key == "seed":
+                    parsed[key] = int(value)
+                elif key in {
+                    "cumulative_cost",
+                    "cumulative_interference",
+                    "cumulative_switches",
+                    "offline_cost",
+                    "offline_gap",
+                    "improvement_vs_cold",
+                    "mean_feasible_fraction",
+                    "mean_success_probability",
+                    "mean_expected_cost",
+                    "mean_cx_count",
+                    "mean_circuit_depth",
+                    "total_wall_seconds",
+                }:
+                    parsed[key] = float(value)
+                else:
+                    parsed[key] = value
+            rows.append(parsed)
+    return rows
+
+
+def make_regime_quantum_vs_classical(
+    summary_rows: list[dict[str, object]],
+    metadata: dict[str, object],
+    output_dir: Path,
+    *,
+    regime: str,
+    output_name: str,
+) -> None:
+    if regime not in _study_regimes(metadata):
+        return
+
+    apply_style()
+    regime_summary_rows = [row for row in summary_rows if row["regime"] == regime]
+    regime_summary_rows.extend(_extension_summary_rows_for_regime(regime))
+    seeds = sorted({int(row["seed"]) for row in regime_summary_rows})
+    if not seeds:
+        return
+    methods = ("Greedy", "Local Search", "Cold", "Param", "State", "Combined")
+    n_users = int(metadata["n_users"])
+    n_channels = int(metadata["n_channels"])
+    time_steps = int(metadata["time_steps"])
+    lambda_switch = float(metadata["lambda_switch"])
+
+    values: dict[str, list[float]] = {method: [] for method in methods}
+    for seed in seeds:
+        sequence = generate_sequence(
+            n_users=n_users,
+            time_steps=time_steps,
+            regime=regime,
+            seed=seed,
+        )
+        greedy = rollout_heuristic(sequence, "Greedy", n_channels=n_channels, lambda_switch=lambda_switch)
+        local = rollout_heuristic(sequence, "Local Search", n_channels=n_channels, lambda_switch=lambda_switch)
+        values["Greedy"].append(float(greedy.cumulative_costs[-1]))
+        values["Local Search"].append(float(local.cumulative_costs[-1]))
+        values["Cold"].append(
+            next(
+                float(row["cumulative_cost"])
+                for row in regime_summary_rows
+                if row["seed"] == seed and row["method"] == "Cold"
+            )
+        )
+        values["State"].append(
+            next(
+                float(row["cumulative_cost"])
+                for row in regime_summary_rows
+                if row["seed"] == seed and row["method"] == "State"
+            )
+        )
+        values["Combined"].append(
+            next(
+                float(row["cumulative_cost"])
+                for row in regime_summary_rows
+                if row["seed"] == seed and row["method"] == "Combined"
+            )
+        )
+        values["Param"].append(
+            next(
+                float(row["cumulative_cost"])
+                for row in regime_summary_rows
+                if row["seed"] == seed and row["method"] == "Param"
+            )
+        )
+
+    seed_panel_width = max(7.9, 1.38 * len(seeds) + 2.8)
+    fig, (ax_seed, ax_mean) = plt.subplots(
+        1,
+        2,
+        figsize=(seed_panel_width + 4.7, 5.2),
+        gridspec_kw={"width_ratios": [1.95, 1.0]},
+    )
+    fig.subplots_adjust(top=0.79)
+
+    x = np.arange(len(seeds), dtype=float)
+    width = 0.12
+    offsets = (np.arange(len(methods), dtype=float) - 0.5 * (len(methods) - 1)) * width
+    y_max = max(max(series) for series in values.values()) * 1.18
+
+    for offset, method in zip(offsets, methods, strict=True):
+        bars = ax_seed.bar(
+            x + offset,
+            values[method],
+            width=width,
+            color=METHOD_COLORS[method],
+            alpha=0.9,
+            label=method,
+        )
+        for bar in bars:
+            height = float(bar.get_height())
+            ax_seed.text(
+                bar.get_x() + bar.get_width() / 2.0,
+                height + 0.02 * y_max,
+                f"{height:.2f}",
+                ha="center",
+                va="bottom",
+                fontsize=8,
+                rotation=90,
+            )
+
+    for idx, seed in enumerate(seeds):
+        seed_costs = {method: values[method][idx] for method in methods}
+        best_value = min(seed_costs.values())
+        star_y = min(max(seed_costs.values()) + 0.12 * y_max, 0.93 * y_max)
+        for method in methods:
+            if abs(seed_costs[method] - best_value) > 1e-9:
+                continue
+            best_x = x[idx] + offsets[methods.index(method)]
+            ax_seed.scatter(
+                best_x,
+                star_y,
+                marker="*",
+                s=145,
+                color=METHOD_COLORS[method],
+                zorder=4,
+            )
+
+    ax_seed.set_title(f"{_regime_label(regime)} sequences by seed")
+    ax_seed.set_xticks(x)
+    ax_seed.set_xticklabels([f"seed {seed}" for seed in seeds])
+    ax_seed.set_xlabel("Sequence seed")
+    ax_seed.set_ylabel("Cumulative total cost")
+    ax_seed.set_ylim(0.0, y_max)
+    polish_axes(ax_seed)
+    legend_y = 1.00 if regime == "continuous_sudden" else 1.04
+    ax_seed.legend(
+        ncol=2,
+        fontsize=8,
+        loc="upper left",
+        bbox_to_anchor=(0.0, legend_y),
+        borderaxespad=0.0,
+        frameon=False,
+    )
+
+    means = np.array([float(np.mean(values[method])) for method in methods], dtype=float)
+    best_counts = np.array(
+        [
+            sum(
+                1
+                for idx in range(len(seeds))
+                if abs(values[method][idx] - min(values[candidate][idx] for candidate in methods)) <= 1e-9
+            )
+            for method in methods
+        ],
+        dtype=int,
+    )
+    y_positions = np.arange(len(methods), dtype=float)
+    bars = ax_mean.barh(y_positions, means, color=[METHOD_COLORS[method] for method in methods], alpha=0.9)
+    for bar, method, mean_value, bests in zip(bars, methods, means.tolist(), best_counts.tolist(), strict=True):
+        ax_mean.text(
+            float(bar.get_width()) + 0.02 * y_max,
+            bar.get_y() + bar.get_height() / 2.0,
+            f"{mean_value:.3f} | best/tied-best {bests}/{len(seeds)}",
+            va="center",
+            fontsize=9,
+        )
+    seed_title_y = 0.98 if regime == "continuous_sudden" else 1.0
+    mean_title_y = 0.95 if regime == "continuous_sudden" else 1.0
+    ax_seed.set_title(f"{_regime_label(regime)} sequences by seed", y=seed_title_y)
+    ax_mean.set_title(f"Average over {len(seeds)} {_regime_label(regime).lower()} seeds", y=mean_title_y)
+    ax_mean.set_yticks(y_positions)
+    ax_mean.set_yticklabels(["Greedy", "Greedy +\nLocal Search", "Cold", "Parameter\nTransfer", "State", "Combined"])
+    ax_mean.set_xlabel("Mean cumulative cost")
+    ax_mean.set_xlim(0.0, y_max)
+    ax_mean.invert_yaxis()
+    polish_axes(ax_mean)
+    caption_y = 0.01 if regime == "continuous_sudden" else -0.01
+    fig.text(
+        0.5,
+        caption_y,
+        "Star marks the best or tied-best method for each seed. Lower cost is better.",
+        ha="center",
+        fontsize=10,
+    )
+    fig.suptitle(f"{_regime_label(regime)} Regime", fontsize=15, y=0.98, weight="bold")
+    save_figure(fig, output_dir / output_name)
+
+
+def make_f10_gradual_quantum_vs_classical(
+    summary_rows: list[dict[str, object]],
+    metadata: dict[str, object],
+    output_dir: Path,
+) -> None:
+    make_regime_quantum_vs_classical(
+        summary_rows,
+        metadata,
+        output_dir,
+        regime="gradual",
+        output_name="F10_gradual_quantum_vs_classical.png",
+    )
+
+
+def make_f11_stationary_quantum_vs_classical(
+    summary_rows: list[dict[str, object]],
+    metadata: dict[str, object],
+    output_dir: Path,
+) -> None:
+    make_regime_quantum_vs_classical(
+        summary_rows,
+        metadata,
+        output_dir,
+        regime="stationary",
+        output_name="F11_stationary_quantum_vs_classical.png",
+    )
+
+
+def make_f12_continuous_sudden_quantum_vs_classical(
+    summary_rows: list[dict[str, object]],
+    metadata: dict[str, object],
+    output_dir: Path,
+) -> None:
+    make_regime_quantum_vs_classical(
+        summary_rows,
+        metadata,
+        output_dir,
+        regime="continuous_sudden",
+        output_name="F12_continuous_sudden_quantum_vs_classical.png",
+    )
 
 
 def main() -> None:
@@ -641,12 +1073,12 @@ def main() -> None:
     dataset = load_question_dataset(args.input_prefix)
     metadata = dataset["metadata"]
 
-    make_f1_main_result(dataset["summary_rows"], output_dir)
-    make_f2_factorial_heatmaps(dataset["factorial_rows"], output_dir)
-    make_f3_transfer_gain(dataset["transfer_rows"], output_dir)
-    make_f4_adaptation_traces(dataset["trace_rows"], output_dir)
+    make_f1_main_result(dataset["summary_rows"], metadata, output_dir)
+    make_f2_factorial_heatmaps(dataset["summary_rows"], metadata, output_dir)
+    make_f3_transfer_gain(dataset["transfer_rows"], metadata, output_dir)
+    make_f4_adaptation_traces(dataset["trace_rows"], metadata, output_dir)
     make_f5_allocation_timelines(dataset["allocation_rows"], dataset["step_rows"], metadata, output_dir)
-    make_f6_tradeoff(dataset["tradeoff_rows"], output_dir)
+    make_f6_tradeoff(dataset["tradeoff_rows"], metadata, output_dir)
     make_f7_network_animation(
         dataset["position_rows"],
         dataset["edge_rows"],
@@ -656,7 +1088,11 @@ def main() -> None:
         output_dir,
         args.fps,
     )
-    make_f8_optimization_race(dataset["trace_rows"], output_dir, args.fps)
+    make_f8_optimization_race(dataset["trace_rows"], metadata, output_dir, args.fps)
+    make_f9_combined_vs_state_seed_gaps(dataset["summary_rows"], metadata, output_dir)
+    make_f10_gradual_quantum_vs_classical(dataset["summary_rows"], metadata, output_dir)
+    make_f11_stationary_quantum_vs_classical(dataset["summary_rows"], metadata, output_dir)
+    make_f12_continuous_sudden_quantum_vs_classical(dataset["summary_rows"], metadata, output_dir)
 
     for path in sorted(output_dir.iterdir()):
         if path.suffix.lower() in {".png", ".gif"}:

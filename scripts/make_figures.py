@@ -56,6 +56,11 @@ def parse_args() -> argparse.Namespace:
         default="quantum_benchmarks_smoke",
         help="Prefix under artifacts/raw_results for quantum benchmark exports.",
     )
+    parser.add_argument(
+        "--output-dir",
+        default=str(ROOT / "artifacts" / "figures"),
+        help="Directory where rendered figure PNGs will be written.",
+    )
     return parser.parse_args()
 
 
@@ -166,10 +171,33 @@ def load_quantum_benchmark_dataset(prefix: str) -> tuple[dict[str, object], list
     return metadata, _read_csv(tradeoff_path), _read_csv(transfer_path)
 
 
+def _select_f1_snapshots(sequence) -> list[int]:
+    if sequence.regime == "sudden" and len(sequence.snapshots) >= 10:
+        return [0, 4, 5, len(sequence.snapshots) - 1]
+    count = min(4, len(sequence.snapshots))
+    return np.linspace(0, len(sequence.snapshots) - 1, num=count, dtype=int).tolist()
+
+
+def _largest_moved_user(sequence, snapshot_t: int) -> int | None:
+    if snapshot_t <= 0 or snapshot_t >= len(sequence.snapshots):
+        return None
+    previous = sequence.snapshots[snapshot_t - 1].positions
+    current = sequence.snapshots[snapshot_t].positions
+    displacement = np.linalg.norm(current - previous, axis=1)
+    return int(np.argmax(displacement))
+
+
 def make_f1(sequence, combined_allocations, output_dir: Path) -> None:
     fig, axes = plt.subplots(1, 4, figsize=(15.2, 3.9))
-    snapshots = [0, 4, 5, 9]
-    moved_user = 4
+    snapshots = _select_f1_snapshots(sequence)
+    jump_snapshot = None
+    if sequence.regime == "sudden" and len(sequence.snapshots) > 1:
+        deltas = [
+            weighted_bray_curtis_change(sequence.snapshots[idx].weights, sequence.snapshots[idx - 1].weights)
+            for idx in range(1, len(sequence.snapshots))
+        ]
+        jump_snapshot = int(np.argmax(np.array(deltas, dtype=float))) + 1
+    moved_user = _largest_moved_user(sequence, jump_snapshot) if jump_snapshot is not None else None
 
     for ax, t in zip(axes, snapshots, strict=True):
         snapshot = sequence.snapshots[t]
@@ -193,12 +221,12 @@ def make_f1(sequence, combined_allocations, output_dir: Path) -> None:
 
         for user, (x, y) in enumerate(positions):
             color = CHANNEL_COLORS[int(combined_allocations[t][user])]
-            halo = "#F94144" if t == 5 and user == moved_user else "#FCFBF8"
+            halo = "#F94144" if jump_snapshot == t and user == moved_user else "#FCFBF8"
             ax.scatter(x, y, s=410, color=halo, edgecolor="none", zorder=2)
             ax.scatter(x, y, s=245, color=color, edgecolor="#1F1F1F", linewidth=1.0, zorder=3)
             ax.text(x, y, f"U{user}", ha="center", va="center", color="white", weight="bold", fontsize=9)
 
-        if t == 5:
+        if jump_snapshot == t and moved_user is not None:
             x, y = positions[moved_user]
             ax.text(x + 0.03, y + 0.07, "sudden jump", color="#C1121F", weight="bold", fontsize=9)
 
@@ -279,12 +307,18 @@ def make_f4(output_dir: Path, quantum_tradeoff_rows: list[dict[str, object]] | N
             xs = [float(row["cumulative_switches"]) for row in rows]
             ys = [float(row["cumulative_interference"]) for row in rows]
             ax.plot(xs, ys, marker="o", markersize=7, linewidth=2.2, label=method, color=METHOD_COLORS[method])
+            grouped_labels: dict[tuple[float, float], list[float]] = {}
             for row, x, y in zip(rows, xs, ys, strict=True):
+                lambda_value = round(float(row["lambda_switch"]), 2)
+                grouped_labels.setdefault((round(x, 6), round(y, 6)), []).append(lambda_value)
+            method_offset = (8, 8) if method == "Cold" else (8, -16)
+            for (x, y), lambda_values in grouped_labels.items():
+                label = "/".join(f"{value:.2f}" for value in lambda_values)
                 ax.annotate(
-                    f"λ={float(row['lambda_switch']):.2f}",
+                    f"λ={label}",
                     (x, y),
                     textcoords="offset points",
-                    xytext=(6, 5),
+                    xytext=method_offset,
                     fontsize=8,
                 )
 
@@ -447,7 +481,7 @@ def make_f8(output_dir: Path) -> None:
 
 def main() -> None:
     args = parse_args()
-    output_dir = ROOT / "artifacts" / "figures"
+    output_dir = Path(args.output_dir).expanduser()
     output_dir.mkdir(parents=True, exist_ok=True)
     _channel_cmap()
 
@@ -462,8 +496,14 @@ def main() -> None:
         quantum_metadata, quantum_methods, quantum_traces = load_quantum_rollout_dataset(args.quantum_prefix)
         methods = {**methods, **quantum_methods}
         _, quantum_tradeoff_rows, quantum_transfer_rows = load_quantum_benchmark_dataset(args.quantum_benchmark_prefix)
+        sequence = generate_sequence(
+            n_users=int(quantum_metadata["n_users"]),
+            time_steps=int(quantum_metadata["time_steps"]),
+            regime=str(quantum_metadata["regime"]),
+            seed=int(quantum_metadata["seed"]),
+        )
 
-    combined_allocations = base_methods["Combined"].allocations
+    combined_allocations = methods["Combined"].allocations if args.rollout_source == "quantum" else base_methods["Combined"].allocations
 
     make_f1(sequence, combined_allocations, output_dir)
     make_f2(methods, output_dir, quantum_metadata=quantum_metadata)

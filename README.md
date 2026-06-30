@@ -73,4 +73,6 @@ team can fill them in incrementally during the hackathon.
   F2/F3/F6 to real QAOA rollout exports with
   `--rollout-source quantum --quantum-prefix <prefix>`, and can switch F4/F5
   to real QAOA benchmark exports with
-  `--quantum-benchmark-prefix <prefix>`.
+  `--quantum-benchmark-prefix <prefix>`. Use `--output-dir <path>` if you want
+  to render a separate quantum-backed figure directory without overwriting the
+  baseline illustrative set.

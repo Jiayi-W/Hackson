@@ -3,8 +3,9 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .DS_Store
+*.egg-info/
 artifacts/cache/*.json
 artifacts/raw_results/*
 artifacts/sequences/*.npz
 artifacts/figures/contact_sheet.png
-
+!artifacts/raw_results/.gitkeep

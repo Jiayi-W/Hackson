@@ -1,0 +1,17 @@
+title: ReSpec-QAOA MVP
+n_users: 5
+n_channels: 3
+time_steps: 10
+lambda_switch: 0.30
+regimes:
+  - stationary
+  - gradual
+  - sudden
+figure_priority:
+  - F1
+  - F2
+  - F3
+  - F5
+  - F6
+  - F7
+

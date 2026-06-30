@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+artifacts/cache/*.json
+artifacts/raw_results/*
+artifacts/sequences/*.npz
+artifacts/figures/contact_sheet.png
+

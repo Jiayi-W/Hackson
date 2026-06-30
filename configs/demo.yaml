@@ -1,0 +1,9 @@
+cache_grid: [5, 5]
+methods:
+  - Cold
+  - Combined
+shots: 256
+final_shots: 2048
+budget_evaluations: 24
+label: precomputed fixed-budget run
+

@@ -1,0 +1,15 @@
+lambda_scan:
+  - 0.00
+  - 0.15
+  - 0.30
+  - 0.60
+methods:
+  - Cold
+  - Param
+  - State
+  - Combined
+extras:
+  - p1
+  - noisy
+  - penalty_vs_feasible
+

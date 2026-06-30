@@ -1,0 +1,18 @@
+{
+  "regime": "gradual",
+  "seed": 11,
+  "lambda_switch": 0.3,
+  "n_users": 5,
+  "n_channels": 3,
+  "optimization_shots": 128,
+  "final_shots": 512,
+  "evaluations": 8,
+  "time_steps": 5,
+  "output_prefix": "quantum_suite_smoke",
+  "methods": [
+    "Cold",
+    "Param",
+    "State",
+    "Combined"
+  ]
+}

@@ -1,0 +1,5 @@
+method,final_cost,final_interference,final_switches
+Cold,0.24,0.0,0.8
+Param,0.48,0.0,1.6
+State,0.0,0.0,0.0
+Combined,0.0,0.0,0.0

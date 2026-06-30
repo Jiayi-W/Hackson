@@ -36,6 +36,13 @@ class SnapshotResult:
 
 
 @dataclass
+class OptimizationTrace:
+    parameters: list[np.ndarray]
+    objective_values: np.ndarray
+    best_so_far: np.ndarray
+
+
+@dataclass
 class StrategyRollout:
     method: str
     allocations: list[np.ndarray]
@@ -43,4 +50,5 @@ class StrategyRollout:
     cumulative_costs: np.ndarray
     cumulative_interference: np.ndarray
     cumulative_switches: np.ndarray
-
+    snapshot_results: list[SnapshotResult] | None = None
+    optimization_traces: list[OptimizationTrace] | None = None
